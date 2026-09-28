@@ -1,0 +1,97 @@
+{
+  "name": "ImpeccableTech — LeadFlow AI Qualification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "leadflow",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $json.body ?? $json;\\nreturn [{ json: { ...lead, receivedAt: new Date().toISOString() } }];"
+      },
+      "id": "normalize",
+      "name": "Normalize Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.OPENAI_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: $env.OPENAI_MODEL || 'gpt-4o-mini', response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You qualify business leads. Return strict JSON with: score (0-100 integer), status (qualified|nurture|disqualified), intent, urgency, service, summary, reason. Base the score on clarity of need, business relevance, urgency and stated budget. Never invent facts.' }, { role: 'user', content: JSON.stringify($json) } ] } }}"
+      },
+      "id": "ai",
+      "name": "AI Qualify Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.choices?.[0]?.message?.content ?? '{}';\\nconst ai = JSON.parse(raw);\\nreturn [{ json: { ...$('Normalize Lead').first().json, ...ai, ai_score: ai.score, ai_summary: ai.summary, ai_intent: ai.intent, ai_urgency: ai.urgency, ai_service: ai.service, ai_reason: ai.reason } }];"
+      },
+      "id": "shape",
+      "name": "Shape Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL + '/rest/v1/leads'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Authorization", "value": "={{'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { name: $json.name, email: $json.email, company: $json.company, message: $json.message, budget: $json.budget, timeline: $json.timeline, source: $json.source, status: $json.status, ai_score: $json.ai_score, ai_summary: $json.ai_summary, ai_intent: $json.ai_intent, ai_urgency: $json.ai_urgency, ai_service: $json.ai_service, ai_reason: $json.ai_reason } }}"
+      },
+      "id": "supabase",
+      "name": "Save to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1020, 0]
+    }
+  ],
+  "connections": {
+    "Lead Webhook": { "main": [[{ "node": "Normalize Lead", "type": "main", "index": 0 }]] },
+    "Normalize Lead": { "main": [[{ "node": "AI Qualify Lead", "type": "main", "index": 0 }]] },
+    "AI Qualify Lead": { "main": [[{ "node": "Shape Result", "type": "main", "index": 0 }]] },
+    "Shape Result": { "main": [[{ "node": "Save to Supabase", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "leadflow-v1"
+}
